@@ -3,337 +3,353 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ._base import Distiller
-from ._common import ConvReg, get_feat_shapes
 
 def kd_loss(logits_student, logits_teacher, temperature):
     log_pred_student = F.log_softmax(logits_student / temperature, dim=1)
     pred_teacher = F.softmax(logits_teacher / temperature, dim=1)
-    loss_kd = F.kl_div(log_pred_student, pred_teacher, reduction="none").sum(1).mean()
+    loss_kd = F.kl_div(log_pred_student, pred_teacher, reduction="none")
     loss_kd *= temperature**2
     return loss_kd
 
-
-class SemCKD(Distiller):
-    """SemCKD: Cross-Layer Distillation with Semantic Calibration"""
-
+class TaT(Distiller):
     def __init__(self, student, teacher, cfg):
-        super(SemCKD, self).__init__(student, teacher)
-        # self.student = student
-        # self.teacher = teacher
-        self.ce_loss_weight = cfg.SemCKD.LOSS.CE_WEIGHT
-        self.kd_loss_weight = cfg.SemCKD.LOSS.KD_WEIGHT
-        self.fmd_loss_weight = cfg.SemCKD.LOSS.FMD_WEIGHT
+        super(TaT, self).__init__(student, teacher)
+        self.ce_loss_weight = cfg.TAT.LOSS.CE_WEIGHT
+        self.kd_loss_weight = cfg.TAT.LOSS.KD_WEIGHT
+        self.tat_loss_weight = cfg.TAT.LOSS.TAT_WEIGHT
+        self.temperature = cfg.TAT.TEMPERATURE
+        self.patch_n = cfg.TAT.PATCH_N
+        self.patch_m = cfg.TAT.PATCH_N
+        self.group_num = cfg.TAT.GROUP
+        # self.batch_transformation = batch_transformation()
+        self.transformation = transformation()
+        self.bs = cfg.SOLVER.BATCH_SIZE
         self.crit = nn.MSELoss(reduction='none')
-        self.batch_size = cfg.SOLVER.BATCH_SIZE
-        self.num_stu_layer = len(self.student.get_stage_channels())
-        self.num_tea_layer = len(self.teacher.get_stage_channels())
-        self.stu_channels = self.student.get_stage_channels()[0:-1]
-        self.tea_channels = self.teacher.get_stage_channels()[0:-1]
-        self.attention_allocation = Attention_Allocation(self.num_stu_layer - 1, self.num_tea_layer - 1, self.batch_size,
-                                              self.stu_channels, self.tea_channels)
+        # self.crit = n
+
 
     def get_learnable_parameters(self):
-        return super().get_learnable_parameters() + list(self.attention_allocation.parameters())
+        return super().get_learnable_parameters() + list(self.transformation.parameters())
 
     def forward_train(self, image, target, **kwargs):
-        # def __init__(self, stu_layer_len, tea_layer_len, input_channel, s_n, t_n, factor=4)
-        # stu_layer_len, tea_layer_len, input_channel = batch size, s_n, t_n, factor = 4
-        with torch.no_grad():
-            # logits_teacher, feature_teacher = self.teacher(image)
-            logits_teacher, feat_tea = self.teacher(image)
-        feature_teacher = feat_tea['feats']
-
-        # logits_student, feature_student = self.student(image)
         logits_student, feat_stu = self.student(image)
-        feature_student = feat_stu['feats']
+        with torch.no_grad():
+            logits_teacher, feat_tea = self.teacher(image)
 
-        # print("feature_student:",feature_student)
+        feature_student = feat_stu["feats"][3]
+        # print("feature student shape:", feature_student.shape)
+        feature_teacher = feat_tea["feats"][3]
+        # print("----------feature_student----------", feature_student.shape)
+
+        s_target = self.transformation(feature_student, feature_teacher) # B x N x C
+        t_target = torch.flatten(feature_teacher, start_dim=2)
+        t_target = torch.transpose(t_target, 1, 2)
+
+        # loss_tat = F.mse_loss(s_target, t_target)
+        loss_tat = self.crit(s_target, t_target)
+
+
+        # TAT loss ( patch )
+
+        # stu_patch_group = patch_group(feature_student)
+        # tea_patch_group = patch_group(feature_teacher)
+        #
+        # tat_list = []
+        # # loss_tat = sum([F.mse_loss(self.transformation(stu_patch, tea_patch) for )])
+        # # len = len(stu_patch_group)
+        # for i in range(len(stu_patch_group)):
+        #     stu_patch = stu_patch_group[i]
+        #     # print("--------------stu_patch shape-------------", stu_patch.shape)
+        #     tea_patch = tea_patch_group[i]
+        #
+        #     # f_s = torch.flatten(self.regressor(feat_stu), start_dim=2)
+        #     t_target = torch.flatten(tea_patch,start_dim=2)
+        #     t_target = torch.transpose(t_target, 1, 2)
+        #
+        #     # print("---------teacher patch----------:",tea_patch.shape)
+        #
+        #     # s_n = stu_patch.shape[i]
+        #     # t_n = tea_patch_group[i]
+        #
+        #     s_target = self.transformation(stu_patch, tea_patch)
+        #
+        #     tat_list.append(F.mse_loss(s_target,t_target))
+        #
+        # loss_tat = sum(tat_list)
+
+
 
         # CE loss
         loss_ce = self.ce_loss_weight * F.cross_entropy(logits_student, target)
 
         # KD loss
-        loss_kd = self.kd_loss_weight * kd_loss(logits_student, logits_teacher, temperature=4)
-
-        # SemCKD loss
-        # num_stu_layer = len(feature_student['feats'])
-        # num_tea_layer = len(feature_teacher['feats'])
-        # num_stu_layer = len(feat_stu['feats'])
-        # num_tea_layer = len(feat_tea['feats'])
+        loss_kd = self.kd_loss_weight * kd_loss(logits_student, logits_teacher, self.temperature)
 
 
-        # print("---------num_stu_layer------:", num_stu_layer)
-        # print("---------stu_layer----------:", len(self.student.get_stage_channels()))
-
-        # batch_size = image.size(0)
-        # input_channel = batch_size
-        stu_channel = [f.shape[1] for f in feature_student[0:-1]]
-        tea_channel = [f.shape[1] for f in feature_teacher[0:-1]]
-        # if self.stu_channels == stu_channel:
-        #     print("=====================True===================")
-
-        # Attention allocation return: attention, proj_value_stu, value_tea
-
-        # attention_allocation = Attention_Allocation(num_stu_layer - 2, num_tea_layer - 2, input_channel, stu_channel,
-        #                                             tea_channel)
-        # attention, proj_value_stu, value_tea = attention_allocation(feature_student[1:-1], feature_teacher[1:-1])
-        attention, proj_value_stu, value_tea = self.attention_allocation(feature_student[0:-1], feature_teacher[0:-1])
-
-
-        bsz, num_stu, num_tea = attention.shape
-        assert self.batch_size == bsz, 'batch_size和bsz不等'
-
-        ind_loss = torch.zeros(bsz, num_stu, num_tea).cuda()
-        for i in range(num_stu):
-            for j in range(num_tea):
-                # ind_loss[:, i, j] = self.crit(proj_value_stu[i][j], value_tea[i][j]).reshape(bsz,-1).mean(-1)
-                ind_loss[:, i, j] = self.crit(proj_value_stu[i][j], value_tea[i][j]).reshape(bsz, -1).mean(-1)
-
-        loss_SemCKD = (attention * ind_loss).sum() / (1.0 * bsz * num_stu)
-        loss_SemCKD = self.fmd_loss_weight * loss_SemCKD
 
         losses_dict = {
             "loss_ce": loss_ce,
             "loss_kd": loss_kd,
-            "loss_SemCKD": loss_SemCKD,
+            "loss_tat": loss_tat,
         }
 
         return logits_student, losses_dict
 
+# def single_stage_at_loss(stu)
 
-# class SemCKD(Distiller):
-#     """SemCKD: Cross-Layer Distillation with Semantic Calibration"""
+
+def patch_group(feat_map, n=2, m=2, group=2):
+    H = feat_map.shape[2]
+    W = feat_map.shape[3]
+    assert H % n == 0, "H无法整除n，不能进行patch group操作"
+    assert W % m == 0, "W无法整除m，不能进行patch group操作"
+    h = H // n
+    w = W // m
+    assert n * m % group == 0, "n*m无法整除group, 不能进行patch group操作"
+    patches_per_group = n * m // group
+
+
+    patch_list = []
+    for i in range(n):
+        for j in range(m):
+            patch_list.append(feat_map[:, :, i*h:(i+1)*h, j*w:(j+1)*w])
+
+    patch_group = []
+    # temp_list = []
+    for i in range(group):
+        # patch_group.append(torch.cat())
+        temp_list = patch_list[i*patches_per_group:(i+1)*patches_per_group]
+        temp_patch = temp_list[0]
+        for j in range(len(temp_list)):
+            if j == 0:
+                continue
+            temp_patch = torch.cat([temp_patch, temp_list[j]], dim=1)
+            if j == len(temp_list)-1:
+                patch_group.append(temp_patch)
+        temp_list.clear()
+
+    return patch_group
+
+
+class Conv(nn.Module):
+    def __init__(self, num_input_channels=512, num_target_channels=512):
+        super(Conv, self).__init__()
+        self.num_input_channels = num_input_channels
+        self.num_target_channels = num_target_channels
+
+        def con3x3(in_channels, out_channels, stride=1):
+            return nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, stride=stride, bias=False)
+
+        self.regressor = nn.Sequential(
+            con3x3(self.num_input_channels,self.num_target_channels),
+            nn.BatchNorm2d(self.num_target_channels),
+        )
+
+    def forward(self, x):
+        x = self.regressor(x)
+        return x
+
+
+class transformation(nn.Module):
+    def __init__(self, num_input_channels=512, num_target_channels=512):
+        super(transformation, self).__init__()
+        self.num_input_channels = num_input_channels
+        self.num_target_channels = num_target_channels
+        self.regressor = Conv(self.num_input_channels, self.num_target_channels)
+
+    def forward(self, feat_stu, feat_tea):
+        f_s = torch.flatten(self.regressor(feat_stu), start_dim=2) # B x C x N
+        # f_t = torch.flatten(self.regressor(feat_tea), start_dim=2) # B x C x N
+        f_t = torch.flatten(feat_tea,start_dim=2)
+
+        f_self = torch.flatten(self.regressor(feat_stu), start_dim=2) # B x C x N
+        f_s = torch.transpose(f_s, 1, 2) # B x N x C
+        f_self = torch.transpose(f_self, 1, 2) # B x N x C
+        N = f_s.shape[1]
+
+        # f_t = torch.transpose(f_t, 1, 2) # B x N x C
+        # print("---------f_self shape---------:", f_s.shape[1])
+        sxt = torch.bmm(f_s, f_t)
+        # print("---------sxt shape------------:", sxt.shape)
+
+        w = F.softmax(sxt, dim=1)
+        # print("----------weight shape---------:", w.shape[2])
+
+        # s_target = torch.bmm(w, f_self)
+
+        s_target = torch.zeros_like(f_s) # B x N x C
+        for i in range(N):
+            # print("wi shape:", w[:, i, :].unsqueeze(2).shape)
+            # print(w[:, i, :].unsqueeze(2).shape)
+            # print(torch.mul(w[:, i, :].unsqueeze(2), f_self).sum(dim=1).shape)
+            s_target[:, i, :] = torch.mul(w[:, i, :].unsqueeze(2), f_self).sum(dim=1)
+            # print(s_target.shape)
+
+        # print("----------s_target shape---------:", s_target.shape)
+
+        return s_target
+
+
+
+
+# class transformation(nn.Module):
+#     def __init__(self, num_input_channels=256, num_target_channels=256):
+#         super(transformation, self).__init__()
+#         self.num_input_channels = num_input_channels
+#         self.num_target_channels = num_target_channels
 #
-#     def __init__(self,student,teacher,cfg):
-#         super(SemCKD, self).__init__(student,teacher)
-#         # self.student = student
-#         # self.teacher = teacher
-#         self.ce_loss_weight = cfg.SemCKD.LOSS.CE_WEIGHT
-#         self.kd_loss_weight = cfg.SemCKD.LOSS.KD_WEIGHT
-#         self.fmd_loss_weight = cfg.SemCKD.LOSS.FMD_WEIGHT
-#         self.crit = nn.MSELoss(reduction='none')
 #
+#     def forward(self, feat_stu, feat_tea, feat_self): # feature shape: C x H x W
+#         # f_s = self.regressor(feat_stu)
+#         # f_t = self.regressor(feat_tea)
+#         # f_self = self.regressor(feat_stu)
+#
+#         # self.regressor = Conv(self.num_input_channels, self.num_target_channels)
+#         # f_s = torch.flatten(self.regressor(feat_stu), start_dim=1)  # shape: C x N, N = H x W
+#         # f_t = torch.flatten(self.regressor(feat_tea), start_dim=1)
+#         f_s = torch.flatten(feat_stu, start_dim=1)  # shape: C x N, N = H x W
+#         f_t = torch.flatten(feat_tea, start_dim=1)
+#         f_s = torch.transpose(f_s, 0, 1) # N x C
+#         f_t = torch.transpose(f_t, 0, 1) # N x C
+#         # f_self = torch.flatten(self.regressor(feat_stu), start_dim=1) # C x N
+#         f_self = torch.flatten(feat_self, start_dim=1)  # C x N
+#         f_self = torch.transpose(f_self, 0, 1) # N x C
+#         s_target = torch.zeros_like(f_s) # N x C
+#
+#         N = f_s.shape[0]
+#         C = f_s.shape[1]
+#
+#
+#         weight = torch.zeros(N)
+#
+#         for i in range(N):
+#             f_t_i = f_t[i, :]  #  1 x C
+#             for j in range(N):
+#                 f_s_j = f_s[j, :] #  1 x C
+#                 weight[i] = torch.dot(f_t_i,f_s_j)
+#             # norm = weight.sum()
+#             # normlize = weight.div(norm)
+#             weight = F.softmax(weight, dim=0)
+#             for k in range(N):
+#                 s_target[i] += weight[k] * f_self[k, :]
+#
+#         return s_target
+#
+# class batch_transformation(nn.Module):
+#     def __init__(self, num_input_channels=256, num_target_channels=256):
+#         super(batch_transformation, self).__init__()
+#         self.num_input_channels = num_input_channels
+#         self.num_target_channels = num_target_channels
+#
+#         self.transformation = transformation(self.num_input_channels, self.num_target_channels).cuda()
+#     def forward(self, feature_student, feature_teacher, feature_self):
+#         bs = feature_student.shape[0]
+#         # print("feature_student shape:", feature_student.shape)
+#         # print("feature_teacher shape:", feature_teacher.shape)
+#         # print("feature_self shape:", feature_self.shape)
+#
+#         # f_s = torch.zeros_like(feature_student)
+#         f_s = torch.zeros(64, 64, 256)
+#
+#         for i in range(bs):
+#             feat_stu = feature_student[i]
+#             feat_tea = feature_teacher[i]
+#             feat_self = feature_self[i]
+#             # print("feat_stu shape:", feat_stu.shape)
+#             # print("feat_tea shape:", feat_tea.shape)
+#             # print("feat_self shape:", feat_self.shape)
+#             f_s[i] = self.transformation(feat_stu, feat_tea, feat_self)
+#             # print("target shape:", target.shape)
+#             # f_s[i] = target
+#
+#         return f_s
+
+# class TaT(Distiller):
+#     def __init__(self, student, teacher, cfg):
+#         super(TaT, self).__init__(student, teacher)
+#         self.ce_loss_weight = cfg.TAT.LOSS.CE_WEIGHT
+#         self.kd_loss_weight = cfg.TAT.LOSS.KD_WEIGHT
+#         self.tat_loss_weight = cfg.TAT.LOSS.TAT_WEIGHT
+#         self.temperature = cfg.TAT.TEMPERATURE
+#         self.patch_n = cfg.TAT.PATCH_N
+#         self.patch_m = cfg.TAT.PATCH_N
+#         self.group_num = cfg.TAT.GROUP
+#         self.regressor = Conv(256, 256).cuda()
+#         self.batch_transformation = batch_transformation().cuda()
+#         # self.transformation = transformation()
+#         self.bs = cfg.SOLVER.BATCH_SIZE
+#         self.crit = nn.MSELoss(reduction='none').cuda()
+#
+#     def get_learnable_parameters(self):
+#         return super().get_learnable_parameters() + list(self.batch_transformation.parameters())
 #
 #     def forward_train(self, image, target, **kwargs):
-#         # def __init__(self, stu_layer_len, tea_layer_len, input_channel, s_n, t_n, factor=4)
-#         # stu_layer_len, tea_layer_len, input_channel = batch size, s_n, t_n, factor = 4
-#         with torch.no_grad():
-#             # logits_teacher, feature_teacher = self.teacher(image)
-#             logits_teacher, feat_tea = self.teacher(image)
-#         feature_teacher = feat_tea['feats']
-#
-#
-#         # logits_student, feature_student = self.student(image)
 #         logits_student, feat_stu = self.student(image)
-#         feature_student = feat_stu['feats']
+#         with torch.no_grad():
+#             logits_teacher, feat_tea = self.teacher(image)
+#
+#         feature_student = feat_stu["feats"][3]
+#         # print("feature student shape:", feature_student.shape)
+#         feature_teacher = feat_tea["feats"][3]
+#         # print("----------feature_student----------", feature_student.shape)
+#         feature_student = self.regressor(feature_student)
+#         feature_teacher = self.regressor(feature_teacher)
+#         feature_self = self.regressor(feature_student)
+#
+#         s_target = self.batch_transformation(feature_student, feature_teacher, feature_self).cuda()
+#         t_target = torch.flatten(feature_teacher, start_dim=2)
+#         t_target = torch.transpose(t_target, 1, 2).cuda()
+#         # print(s_target.is_cuda)
+#         # print(t_target.is_cuda)
+#
+#         # loss_tat = F.mse_loss(s_target, t_target)
+#         loss_tat = self.crit(s_target, t_target)
 #
 #
-#         # print("feature_student:",feature_student)
+#         # TAT loss ( patch )
+#
+#         # stu_patch_group = patch_group(feature_student)
+#         # tea_patch_group = patch_group(feature_teacher)
+#         #
+#         # tat_list = []
+#         # # loss_tat = sum([F.mse_loss(self.transformation(stu_patch, tea_patch) for )])
+#         # # len = len(stu_patch_group)
+#         # for i in range(len(stu_patch_group)):
+#         #     stu_patch = stu_patch_group[i]
+#         #     # print("--------------stu_patch shape-------------", stu_patch.shape)
+#         #     tea_patch = tea_patch_group[i]
+#         #
+#         #     # f_s = torch.flatten(self.regressor(feat_stu), start_dim=2)
+#         #     t_target = torch.flatten(tea_patch,start_dim=2)
+#         #     t_target = torch.transpose(t_target, 1, 2)
+#         #
+#         #     # print("---------teacher patch----------:",tea_patch.shape)
+#         #
+#         #     # s_n = stu_patch.shape[i]
+#         #     # t_n = tea_patch_group[i]
+#         #
+#         #     s_target = self.transformation(stu_patch, tea_patch)
+#         #
+#         #     tat_list.append(F.mse_loss(s_target,t_target))
+#         #
+#         # loss_tat = sum(tat_list)
+#
+#
 #
 #         # CE loss
 #         loss_ce = self.ce_loss_weight * F.cross_entropy(logits_student, target)
 #
-#         #KD loss
-#         loss_kd = self.kd_loss_weight * kd_loss(logits_student, logits_teacher, temperature=4)
-#
-#         #SemCKD loss
-#         # num_stu_layer = len(feature_student['feats'])
-#         # num_tea_layer = len(feature_teacher['feats'])
-#         num_stu_layer = len(feat_stu['feats'])
-#         num_tea_layer = len(feat_tea['feats'])
-#
-#         # print("---------num_stu_layer------:", num_stu_layer)
-#         # print("---------stu_layer----------:", len(self.student.get_stage_channels()))
-#
-#         batch_size = image.size(0)
-#         input_channel = batch_size
-#         stu_channel = [f.shape[1] for f in feature_student[1:-1]]
-#         # s_n = [f.shape[1] for f in feat_s[1:-1]]
-#         tea_channel = [f.shape[1] for f in feature_teacher[1:-1]]
+#         # KD loss
+#         loss_kd = self.kd_loss_weight * kd_loss(logits_student, logits_teacher, self.temperature)
 #
 #
-#         # Attention allocation return: attention, proj_value_stu, value_tea
-#
-#         attention_allocation = Attention_Allocation(num_stu_layer-2, num_tea_layer-2, input_channel, stu_channel, tea_channel)
-#         attention, proj_value_stu, value_tea = attention_allocation(feature_student[1:-1], feature_teacher[1:-1])
-#         # print("proj_value_stu shape", proj_value_stu[0][0].shape)
-#         # print("value_tea shape", value_tea[0][0].shape)
-#
-#
-#
-#         bsz, num_stu, num_tea = attention.shape
-#         assert batch_size == bsz, 'batch_size和bsz不等'
-#
-#         ind_loss = torch.zeros(bsz, num_stu, num_tea).cuda()
-#         for i in range(num_stu):
-#             for j in range(num_tea):
-#                 # ind_loss[:, i, j] = self.crit(proj_value_stu[i][j], value_tea[i][j]).reshape(bsz,-1).mean(-1)
-#                 ind_loss[:, i, j] = self.crit(proj_value_stu[i][j], value_tea[i][j]).reshape(bsz, -1).mean(-1)
-#
-#         loss_SemCKD = (attention * ind_loss).sum()/(1.0*bsz*num_stu)
-#         loss_SemCKD = self.fmd_loss_weight * loss_SemCKD
 #
 #         losses_dict = {
 #             "loss_ce": loss_ce,
-#             "loss_kd": loss_kd,
-#             "loss_SemCKD": loss_SemCKD,
+#             # "loss_kd": loss_kd,
+#             "loss_tat": loss_tat,
 #         }
 #
 #         return logits_student, losses_dict
-
-
-
-
-class Projection(nn.Module):
-    """simple convolutional transformation"""
-    def __init__(self,num_input_channels=1024,num_target_channels=128):
-        super(Projection, self).__init__()
-        self.num_input_channels = num_input_channels
-        self.num_target_channels = num_target_channels
-        self.num_mid_channels = self.num_target_channels * 2
-
-        def con1x1(in_channels,out_channels,stride=1):
-            return nn.Conv2d(in_channels,out_channels,kernel_size=1,padding=0,stride=stride,bias=False)
-        def con3x3(in_channels,out_channels,stride=1):
-            return nn.Conv2d(in_channels,out_channels,kernel_size=3,padding=1,stride=stride,bias=False)
-
-        self.regressor = nn.Sequential(
-            con1x1(self.num_input_channels,self.num_mid_channels),
-            nn.BatchNorm2d(self.num_mid_channels),
-            nn.ReLU(inplace=True),
-            con3x3(self.num_mid_channels,self.num_mid_channels),
-            nn.BatchNorm2d(self.num_mid_channels),
-            nn.ReLU(inplace=True),
-            con1x1(self.num_mid_channels,self.num_target_channels),
-        ).cuda()
-        # self.regressor = self.regressor.cuda()
-
-    def forward(self,x):
-        x = self.regressor(x)
-        return x
-
-class Normalize(nn.Module):
-    def __init__(self, power = 2):
-        super(Normalize, self).__init__()
-        self.power = power
-
-    def forward(self,x):
-        norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
-        out = x.div(norm)
-        return out
-
-class MLP(nn.Module):
-    """Multi-Layer Perceptron"""
-    def __init__(self,dim_in=1024,dim_out=128):
-        super(MLP, self).__init__()
-        self.dim_in = dim_in
-        self.dim_out = dim_out
-        self.linear1 = nn.Linear(dim_in, 2 * dim_out).cuda()
-        self.relu = nn.ReLU(inplace=True).cuda()
-        self.linear2 = nn.Linear(2 * dim_out, dim_out).cuda()
-        self.l2norm = Normalize(2).cuda()
-
-    def forward(self,x):
-        # print("---------------is_cuda---------------")
-        # print("------dim_in------:",self.dim_in)
-        # print("------dim_out------:", self.dim_out)
-        # print("before x.view:", x.shape)
-
-        x = x.view(x.shape[0], -1)
-        # print("after x.view:", x.shape)
-        # print("-------------------")
-        # x = x.cpu()
-        # x = self.l2norm(self.linear2(self.relu(self.linear1(x))))
-        x = self.linear1(x)
-        x = self.relu(x)
-        x = self.l2norm(self.linear2(x))
-        # x = x.cuda()
-        # print(x.is_cuda)
-        return x
-
-
-class Attention_Allocation(nn.Module):
-    """Cross layer Self Attention"""
-    def __init__(self, stu_layer_len, tea_layer_len, input_channel, s_n, t_n, factor = 4):
-        super(Attention_Allocation, self).__init__()
-        self.s_len = stu_layer_len
-        self.t_len = tea_layer_len
-        self.input_channel = input_channel
-
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-
-        for i in range(self.s_len):
-            setattr(self, 'query_weight' + str(i), MLP(input_channel, input_channel // factor))
-        for j in range(self.t_len):
-            setattr(self, 'key_weight' + str(j), MLP(input_channel, input_channel // factor))
-
-        for i in range(self.s_len):
-            for j in range(self.t_len):
-                setattr(self, 'regressor' + str(i) + str(j), Projection(s_n[i], t_n[j]))
-
-
-    def forward(self, feat_s, feat_t):
-
-        similarity_maxtrix_stu = list(range(len(feat_s)))
-        similarity_maxtrix_tea = list(range(len(feat_t)))
-        bs = feat_s[0].shape[0]
-        # bs = self.batch_size
-
-        # print('--------------batch size---------------:', bs)
-
-        for i in range(len(feat_s)):
-            reshape_stu = feat_s[i].reshape(bs, -1)
-            similarity_maxtrix_stu[i] = torch.matmul(reshape_stu, reshape_stu.t())
-        for j in range(len(feat_t)):
-            reshape_tea = feat_t[j].reshape(bs,-1)
-            similarity_maxtrix_tea[j] = torch.matmul(reshape_tea, reshape_tea.t())
-
-        # print("-------------similarity_maxtrix_stu---------------",similarity_maxtrix_stu[0].is_cuda)
-
-        # print("-------------similarity_maxtrix_stu[0]------------",similarity_maxtrix_stu[0].shape)
-
-        query = self.query_weight0(similarity_maxtrix_stu[0])
-        query = query[:, None, :]
-
-        for i in range(1, len(similarity_maxtrix_stu)):
-            new_query = getattr(self, 'query_weight'+str(i))(similarity_maxtrix_stu[i])
-            query = torch.cat([query, new_query[:, None, :]], 1)
-
-        key = self.key_weight0(similarity_maxtrix_tea[0])
-        key = key[:, :, None]
-        for j in range(1, len(similarity_maxtrix_tea)):
-            new_key = getattr(self, 'key_weight'+str(j))(similarity_maxtrix_tea[j])
-            key = torch.cat([key, new_key[:, :, None]], 2)
-
-        # attention
-        queryXkey = torch.bmm(query, key)
-        attention = F.softmax(queryXkey, dim = -1)
-
-        # Projection
-        proj_value_stu = []
-        value_tea = []
-        for i in range(len(similarity_maxtrix_stu)):
-            proj_value_stu.append([])
-            value_tea.append([])
-            for j in range(len(similarity_maxtrix_tea)):
-                stu_H = feat_s[i].shape[2]
-                tea_H = feat_t[j].shape[2]
-                if stu_H > tea_H:
-                    # print('stu_H > tea_H')
-                    input = F.adaptive_avg_pool2d(feat_s[i], (tea_H, tea_H))
-                    proj_value_stu[i].append(getattr(self, 'regressor' + str(i) + str(j))(input))
-                    value_tea[i].append(feat_t[j])
-                elif stu_H < tea_H or stu_H == tea_H:
-                    # print('stu_H < tea_H or stu_H == tea_H')
-                    target = F.adaptive_avg_pool2d(feat_t[j], (stu_H, stu_H))
-                    # print('feat_s[i] shape:',feat_s[i].shape)
-                    # print('target shape:',target.shape)
-                    proj_value_stu[i].append(getattr(self, 'regressor' + str(i) + str(j))(feat_s[i]))
-                    value_tea[i].append(target)
-                # print('            ')
-
-        return attention, proj_value_stu, value_tea
-
-
 
 
