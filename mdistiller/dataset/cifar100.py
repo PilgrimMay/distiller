@@ -3,6 +3,8 @@ import numpy as np
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from PIL import Image
+import torch
+from mdistiller.engine.multi_train_utils import get_world_size
 
 
 def get_data_folder():
@@ -136,7 +138,13 @@ def get_cifar100_test_transform():
     )
 
 
-def get_cifar100_dataloaders(batch_size, val_batch_size, num_workers):
+def get_cifar100_dataloaders(batch_size, val_batch_size, num_workers, is_distributed=False):
+    num_gpus = get_world_size()
+    assert (
+            batch_size % num_gpus == 0
+    ), "Train batch ({}) must be divisible by the number "
+    "of GPUs ({}) used.".format(batch_size, num_gpus)
+
     data_folder = get_data_folder()
     train_transform = get_cifar100_train_transform()
     test_transform = get_cifar100_test_transform()
@@ -147,10 +155,21 @@ def get_cifar100_dataloaders(batch_size, val_batch_size, num_workers):
     test_set = datasets.CIFAR100(
         root=data_folder, download=True, train=False, transform=test_transform
     )
+    if is_distributed == False:
+        train_loader = DataLoader(
+            train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers
+        )
+    else:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_set)
+        train_batch_sampler = torch.utils.data.BatchSampler(
+            train_sampler, batch_size, drop_last=False
+        )
+        train_loader = DataLoader(train_set,
+                                  batch_sampler=train_batch_sampler,
+                                  pin_memory=False,
+                                  num_workers=num_workers,
+                                  )
 
-    train_loader = DataLoader(
-        train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers
-    )
     test_loader = DataLoader(
         test_set,
         batch_size=val_batch_size,
