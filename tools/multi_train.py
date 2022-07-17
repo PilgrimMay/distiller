@@ -18,6 +18,17 @@ from mdistiller.engine.multi_train_utils import init_distributed_mode
 
 
 def main(cfg, resume, opts):
+
+    if torch.cuda.is_available() is False:
+        raise EnvironmentError("not find GPU device for training.")
+    # 初始化各进程环境 start
+    init_distributed_mode(args)
+    world_size = args.world_size
+    rank = args.rank
+    device = torch.device(args.device)
+    is_distributed = args.distributed
+    # 初始化各进程环境 end
+
     experiment_name = cfg.EXPERIMENT.NAME
     if experiment_name == "":
         experiment_name = cfg.EXPERIMENT.TAG
@@ -37,9 +48,10 @@ def main(cfg, resume, opts):
             cfg.LOG.WANDB = False
 
     # cfg & loggers
-    show_cfg(cfg)
+    if rank == 0:
+        show_cfg(cfg)
     # init dataloader & models
-    train_loader, val_loader, num_data, num_classes = get_dataset(cfg)
+    train_loader, val_loader, num_data, num_classes = get_dataset(cfg, is_distributed)
 
     # vanilla
     if cfg.DISTILLER.TYPE == "NONE":
@@ -52,7 +64,8 @@ def main(cfg, resume, opts):
         distiller = distiller_dict[cfg.DISTILLER.TYPE](model_student)
     # distillation
     else:
-        print(log_msg("Loading teacher model", "INFO"))
+        if rank == 0:
+            print(log_msg("Loading teacher model", "INFO"))
         if cfg.DATASET.TYPE == "imagenet":
             model_teacher = imagenet_model_dict[cfg.DISTILLER.TEACHER](pretrained=True)
             model_student = imagenet_model_dict[cfg.DISTILLER.STUDENT](pretrained=False)
@@ -74,7 +87,18 @@ def main(cfg, resume, opts):
             distiller = distiller_dict[cfg.DISTILLER.TYPE](
                 model_student, model_teacher, cfg
             )
-    distiller = torch.nn.DataParallel(distiller.cuda())
+    # distiller = torch.nn.DataParallel(distiller.cuda())
+
+    if args.syncBN:
+        # 使用SyncBatchNorm
+        print("使用SyncBatchNorm")
+        distiller = torch.nn.SyncBatchNorm.convert_sync_batchnorm(distiller).to(device)
+
+
+    if is_distributed == True:
+        distiller = torch.nn.parallel.DistributedDataParallel(distiller.cuda(), device_ids=[args.gpu],
+                                                              find_unused_parameters=True)
+
 
     if cfg.DISTILLER.TYPE != "NONE":
         print(
@@ -90,7 +114,8 @@ def main(cfg, resume, opts):
     trainer = trainer_dict[cfg.SOLVER.TRAINER](
         experiment_name, distiller, train_loader, val_loader, cfg
     )
-    trainer.train(resume=resume)
+    # trainer.train(resume=resume)
+    trainer.train(rank, resume=resume)
 
 
 if __name__ == "__main__":
@@ -100,9 +125,16 @@ if __name__ == "__main__":
     parser.add_argument("--cfg", type=str, default="")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("opts", default=None, nargs=argparse.REMAINDER)
+    parser.add_argument('--world-size', default=2, type=int,
+                        help='number of distributed processes')
+    parser.add_argument('--dist-url', default='env://', help='url used to set up distributed training')
 
     args = parser.parse_args()
+
+    num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
+    args.distributed = num_gpus > 1
+
     cfg.merge_from_file(args.cfg)
     cfg.merge_from_list(args.opts)
     cfg.freeze()
-    main(cfg, args.resume, args.opts)
+    main(cfg, args.resume, args.opts, args)

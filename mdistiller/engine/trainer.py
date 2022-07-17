@@ -76,7 +76,7 @@ class BaseTrainer(object):
             lines.append("-" * 25 + os.linesep)
             writer.writelines(lines)
 
-    def train(self, rank, resume=False):
+    def train(self, rank=0, resume=False):
         epoch = 1
         if resume:
             state = load_checkpoint(os.path.join(self.log_path, "latest"))
@@ -106,7 +106,7 @@ class BaseTrainer(object):
         # train loops
         self.distiller.train()
         for idx, data in enumerate(self.train_loader):
-            msg = self.train_iter(data, epoch, train_meters, rank)
+            msg = self.train_iter(data, epoch, train_meters)
             pbar.set_description(log_msg(msg, "TRAIN"))
             pbar.update()
         pbar.close()
@@ -153,7 +153,7 @@ class BaseTrainer(object):
                 student_state, os.path.join(self.log_path, "student_best")
             )
 
-    def train_iter(self, data, epoch, train_meters, rank):
+    def train_iter(self, data, epoch, train_meters):
         self.optimizer.zero_grad()
         train_start_time = time.time()
         image, target, index = data

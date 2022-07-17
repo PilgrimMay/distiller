@@ -169,13 +169,20 @@ def get_cifar100_dataloaders(batch_size, val_batch_size, num_workers, is_distrib
                                   pin_memory=False,
                                   num_workers=num_workers,
                                   )
+    if is_distributed == False:
+        test_loader = DataLoader(
+            test_set, batch_size=val_batch_size, shuffle=False, num_workers=1
+        )
+    else:
+        val_sampler = torch.utils.data.distributed.DistributedSampler(test_set)
+        test_loader = DataLoader(
+            test_set,
+            batch_size=val_batch_size,
+            sampler=val_sampler,
+            pin_memory=False,
+            num_workers=num_workers,
+        )
 
-    test_loader = DataLoader(
-        test_set,
-        batch_size=val_batch_size,
-        shuffle=False,
-        num_workers=1,
-    )
     return train_loader, test_loader, num_data
 
 
