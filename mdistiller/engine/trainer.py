@@ -87,6 +87,7 @@ class BaseTrainer(object):
         while epoch < self.cfg.SOLVER.EPOCHS + 1:
             self.train_epoch(epoch, rank)
             epoch += 1
+            self.train_loader.sampler.set_epoch(epoch)
         print(log_msg("Best accuracy:{}".format(self.best_acc), "EVAL"))
         with open(os.path.join(self.log_path, "worklog.txt"), "a") as writer:
             writer.write("best_acc\t" + "{:.2f}".format(float(self.best_acc)))
