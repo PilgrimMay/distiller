@@ -1,0 +1,50 @@
+EXPERIMENT:
+  NAME: ""
+  TAG: "pkd,res32x4,res8x4"
+#  TAG: "pkd,res56,res20"
+#  TAG: "pkd,res110,res32"
+#  TAG: "pkd,res110,res20"
+#  TAG: "pkd,vgg13,vgg8"
+#  TAG: "pkd,wrn_40_2,wrn_16_2"
+#  TAG: "pkd,wrn_40_2,wrn_40_1"
+#  TAG: "pkd,res32x4,ShuffleV2"
+#  TAG: "pkd,vgg13,mv2"
+#  TAG: "pkd,wrn_40_2,shuv1"
+#  TAG: "pkd,res50,vgg8"
+#  TAG: "pkd,res50,mv2"
+  PROJECT: "cifar100_baselines"
+DISTILLER:
+  TYPE: "PKD"
+  TEACHER: "resnet32x4"
+  STUDENT: "resnet8x4"
+#  TEACHER: "resnet56"
+#  STUDENT: "resnet20"
+#  TEACHER: "resnet110"
+#  STUDENT: "resnet32"
+#  TEACHER: "vgg13"
+#  STUDENT: "vgg8"
+#  TEACHER: "wrn_40_2"
+#  STUDENT: "wrn_16_2"
+#  TEACHER: "wrn_40_2"
+#  STUDENT: "wrn_40_1"
+#  TEACHER: "resnet32x4"
+#  STUDENT: "ShuffleV2"
+#  TEACHER: "vgg13"
+#  STUDENT: "MobileNetV2"
+#  TEACHER: "wrn_40_2"
+#  STUDENT: "ShuffleV1"
+#  TEACHER: "ResNet50"
+#  STUDENT: "MobileNetV2"
+#  TEACHER: "ResNet50"
+#  STUDENT: "vgg8"
+
+SOLVER:
+  BATCH_SIZE: 64
+  EPOCHS: 240
+  LR: 0.01
+  LR_DECAY_STAGES: [150, 180, 210]
+  LR_DECAY_RATE: 0.1
+  WEIGHT_DECAY: 0.0005
+  MOMENTUM: 0.9
+  TYPE: "SGD"
+

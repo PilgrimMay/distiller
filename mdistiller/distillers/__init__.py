@@ -15,6 +15,7 @@ from .DKD import DKD
 from .SemCKD import SemCKD
 from .MultiStudent import MultiStudent
 from .TaT import TaT
+from .PKD import PKD
 
 distiller_dict = {
     "NONE": Vanilla,
@@ -34,4 +35,5 @@ distiller_dict = {
     "SemCKD": SemCKD,
     "MultiStudent": MultiStudent,
     "TaT": TaT,
+    "PKD": PKD,
 }
