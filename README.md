@@ -115,6 +115,9 @@ sudo python3 setup.py develop
   
   # example for TaT method
   python3 tools/train.py --cfg configs/cifar100/tat.yaml
+  
+  # example for PKD method
+  CUDA_VISIBLE_DEVICES=0 python3 tools/train.py --cfg configs/cifar100/pkd.yaml
 
   # you can also change settings at command line
   python3 tools/train.py --cfg configs/cifar100/dkd/res32x4_res8x4.yaml SOLVER.BATCH_SIZE 128 SOLVER.LR 0.1
