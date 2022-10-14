@@ -69,28 +69,17 @@ class PKD(Distiller):
         self.ce_loss_weight = cfg.PKD.LOSS.CE_WEIGHT
         self.kd_loss_weight = cfg.PKD.LOSS.KD_WEIGHT
         self.prototype_weight = cfg.PKD.LOSS.PROTOTYPE_WEIGHT
-        # self.prototype = PrototypeNet()
-        self.prototype = InformationPrototype(num_classes=100)
-
-        self.feat_prototype_0 = FeaturePrototype(num_classes=100, channels=32,  H=32, W=32)
-        self.feat_prototype_1 = FeaturePrototype(num_classes=100, channels=64,  H=32, W=32)
-        self.feat_prototype_2 = FeaturePrototype(num_classes=100, channels=128, H=16, W=16)
-        self.feat_prototype_3 = FeaturePrototype(num_classes=100, channels=256, H=8,  W=8)
-
+        # self.w_graph = cfg.IRG.LOSS.W_GRAPH
+        # self.inter_class_weight = cfg.PKD.LOSS.INTER_CLASS_WEIGHT
+        self.prototype = InformationPrototype(num_classes=1000)
+        self.mseloss = nn.MSELoss()
         self.loss_func = cfg.PKD.LOSS_FUNC
-        self.avgpool_s = nn.AvgPool2d(2)
-        self.avgpool_t = nn.AvgPool2d(4)
-
-        self.embed_s = Embed(256, 256)
-        self.embed_t = Embed(256, 256)
-        self.embed = Embed(160, 512)
-        self.focus_s = Focus(512, 256, 1, 1)
-        self.focus_t = Focus(512, 256, 1, 1)
+        # self.embed_s = Embed(64, 128)
+        # self.embed_t = Embed(128, 64)
 
     # include embedding
     def get_learnable_parameters(self):
         return super().get_learnable_parameters()
-               # + list(self.embed_t.parameters())
                # list(self.embed_s.parameters()) + list(self.embed_t.parameters()) + \
 
 
@@ -132,43 +121,12 @@ class PKD(Distiller):
         with torch.no_grad():
             logits_teacher, feature_teacher = self.teacher(image)
 
-        # feat_s = self.focus_s(feature_student["feats"][3])
-        # feat_t = self.focus_t(feature_teacher["feats"][3])
-
-        # feat_3_stu = feature_student["feats"][3]
-        # feat_3_tea = feature_teacher["feats"][3]
-
-        # feat_2_stu = feature_student["feats"][2]
-        # feat_2_tea = feature_teacher["feats"][2]
-
-        # feat_1_stu = feature_student["feats"][1]
-        # feat_1_tea = feature_teacher["feats"][1]
-
-        # feat_0_stu = feature_student["feats"][0]
-        # feat_0_tea = feature_teacher["feats"][0]
-
-        #
-        # last_feat_stu = feature_student["feats"][-1]
-        # last_feat_tea = feature_teacher["feats"][-1]
-        # last_feat_stu = self.avgpool_s(last_feat_stu)
-        # last_feat_stu = self.embed(last_feat_tea.squeeze())
-        # last_feat_tea = self.avgpool_t(last_feat_tea).squeeze()
-        # feat_prototype_stu, feat_inter_class_stu = self.prototype(last_feat_stu, logits_student)
-        # feat_prototypr_tea, feat_inter_class_tea = self.prototype(last_feat_tea, logits_teacher)
-        # pkd_loss_feat = F.l1_loss(feat_prototype_stu, feat_prototypr_tea) + F.l1_loss(feat_inter_class_stu,
-        #                                                                     feat_inter_class_tea)
-
-
-
-
         feat_stu = feature_student['pooled_feat']
         feat_tea = feature_teacher['pooled_feat']
 
         # feat_stu = self.embed_s(feat_stu)
-        feat_tea = self.embed_t(feat_tea)
+        # feat_tea = self.embed_t(feat_tea)
 
-        # print("feat_stu shape:", feat_stu.shape)
-        # print("feat_tea shape:", feat_tea.shape)
 
 
         # CE loss
@@ -179,72 +137,45 @@ class PKD(Distiller):
             logits_student, logits_teacher, self.temperature
         )
 
-        # prototype loss
-
-        # feat_prototype_s_3, feat_inter_class_s_3 = self.feat_prototype_3(feat_3_stu, logits_student)
-        # feat_prototype_t_3, feat_inter_class_t_3 = self.feat_prototype_3(feat_3_tea, logits_teacher)
-
-        # feat_prototype_s_2, feat_inter_class_s_2 = self.feat_prototype_2(feat_2_stu, logits_student)
-        # feat_prototype_t_2, feat_inter_class_t_2 = self.feat_prototype_2(feat_2_tea, logits_teacher)
-
-        # feat_prototype_s_1, feat_inter_class_s_1 = self.feat_prototype_1(feat_1_stu, logits_student)
-        # feat_prototype_t_1, feat_inter_class_t_1 = self.feat_prototype_1(feat_1_tea, logits_teacher)
-
-        # feat_prototype_s_0, feat_inter_class_s_0 = self.feat_prototype_0(feat_0_stu, logits_student)
-        # feat_prototype_t_0, feat_inter_class_t_0 = self.feat_prototype_0(feat_0_tea, logits_teacher)
-
-        # pkd_loss_0 = F.l1_loss(feat_prototype_s_0, feat_prototype_t_0) + F.l1_loss(feat_inter_class_s_0,
-        #                                                                            feat_inter_class_t_0)
-
-        # pkd_loss_1 = F.l1_loss(feat_prototype_s_1, feat_prototype_t_1) + F.l1_loss(feat_inter_class_s_1,
-        #                                                                            feat_inter_class_t_1)
-
-        # pkd_loss_2 = F.l1_loss(feat_prototype_s_2, feat_prototype_t_2) + F.l1_loss(feat_inter_class_s_2,
-        #                                                                            feat_inter_class_t_2)
-
-        # pkd_loss_3 = F.l1_loss(feat_prototype_s_3, feat_prototype_t_3) + F.l1_loss(feat_inter_class_s_3,
-        #                                                                            feat_inter_class_t_3)
-
-
-
 
         prototype_stu, inter_class_matrix_stu = self.prototype(feat_stu, logits_student)
-        prototypr_tea, inter_class_matrix_tea = self.prototype(feat_tea, logits_teacher)
+        prototype_tea, inter_class_matrix_tea = self.prototype(feat_tea, logits_teacher)
 
-        pkd_loss_last = F.l1_loss(prototype_stu, prototypr_tea) + F.l1_loss(inter_class_matrix_stu,
-                                                                                   inter_class_matrix_tea)
-
-        # loss1 = self.prototype_weight * (F.l1_loss(prototype_stu, prototypr_tea) +
-        #                                           F.l1_loss(inter_class_matrix_stu, inter_class_matrix_tea) +
-        #                                           F.l1_loss(feat_prototype_s, feat_prototype_t) +
-        #                                           F.l1_loss(feat_inter_class_s, feat_inter_class_t))
-        #
-        # loss2 = self.prototype_weight * (F.l1_loss(prototype_stu, prototypr_tea) +
-        #                                  F.l1_loss(inter_class_matrix_stu, inter_class_matrix_tea))
-        #
-        # print(loss1>loss2)
-
-        loss_prototype = self.prototype_weight * (pkd_loss_last)
-
-        # loss_prototype = self.prototype_weight * (pkd_loss_last + pkd_loss_feat)
+        pkd_loss = F.l1_loss(prototype_stu, prototype_tea) + F.l1_loss(inter_class_matrix_stu,
+                                                                            inter_class_matrix_tea)
 
 
-        # if self.loss_func == 'l1':
-        #     loss_prototype = self.prototype_weight * (F.l1_loss(prototype_stu, prototypr_tea) +
-        #                                               F.l1_loss(inter_class_matrix_stu, inter_class_matrix_tea))
-        # elif self.loss_func == 'l2':
-        #     loss_prototype = self.prototype_weight * (F.mse_loss(prototype_stu, prototypr_tea) +
-        #                                               F.mse_loss(inter_class_matrix_stu, inter_class_matrix_tea))
-        # else:
-        #     raise NotImplementedError
+        loss_prototype = self.prototype_weight * (pkd_loss)
+
 
         losses_dict = {
             "loss_ce": loss_ce,
             "loss_kd": loss_kd,
-            "loss prototype": loss_prototype
+            "loss prototype": loss_prototype,
         }
 
         return logits_student, losses_dict
+
+    @staticmethod
+    def pdist(s, t, squared=False, eps=1e-12, normalization='max'):
+
+        xx = s.pow(2).sum(dim=1)
+        yy = t.pow(2).sum(dim=1)
+        prod = s @ t.t()
+
+        res = (xx.unsqueeze(1) +
+               yy.unsqueeze(0) - 2 * prod).clamp(min=eps)
+
+        if  not squared:
+            res = res.sqrt()
+
+        if normalization == 'max':
+            res_max = res.max() + eps
+            res = res / res_max
+
+        return res
+
+
 
 class Embed(nn.Module):
     """Embedding module"""
@@ -264,6 +195,7 @@ class Embed(nn.Module):
         x = self.l2norm(x)
         return x
 
+
 class Normalize(nn.Module):
     """normalization layer"""
 
@@ -276,83 +208,16 @@ class Normalize(nn.Module):
         out = x.div(norm)
         return out
 
-
-class FeaturePrototype(nn.Module):
-    def __init__(self, num_classes, channels, H, W):
-        super(FeaturePrototype, self).__init__()
-
-        self.register_buffer('step', torch.tensor([0]*num_classes))
-        self.register_buffer('prototypes', torch.zeros(num_classes, channels, H, W))
-
-    def update_prototype(self, x_new, max_logits, max_cls, prototypes):
-        '''
-
-        :param x_new: 64 x 128 x 16 x 16
-        :param max_logits: 64 x 1
-        :param max_cls: 64 x 1
-        :return: prototype: num_classes x channels x h x w  100 x 128 x 16 x 16
-        '''
-
-
-        num_classes = prototypes.shape[0]
-        channels = prototypes.shape[1]
-        H = prototypes.shape[2]
-        W = prototypes.shape[3]
-        local_ptypes = torch.zeros_like(prototypes)
-        local_ptypes_cls_count = torch.zeros(num_classes).to(local_ptypes.device)
-        for idx, cls in enumerate(list(max_cls)):
-            local_ptypes[cls] += x_new[idx]
-            local_ptypes_cls_count[cls] += 1
-
-        exist_indx = local_ptypes_cls_count.type(torch.bool)
-        local_ptypes[exist_indx] = local_ptypes[exist_indx] / (
-                local_ptypes_cls_count[exist_indx].unsqueeze(1).unsqueeze(2).unsqueeze(3).expand(-1,channels, H, W)
-            )
-        prototypes = local_ptypes
-        return prototypes
-
-    def forward(self, x, class_logits):
-        '''
-
-        :param x: 64, 128, 16, 16
-        :param class_logits: 64, 100
-        :return:
-        '''
-
-        class_logits_new = class_logits.clone().detach()
-
-        pred_normed = F.softmax(class_logits_new, dim=1)
-        max_logit = pred_normed.max(dim=1)[0]  # 64
-        max_cls = pred_normed.argmax(dim=1)  # 64
-
-        x_new = x.clone().detach()
-
-
-        self.prototypes = self.update_prototype(x_new, max_logit, max_cls, self.prototypes)
-
-        num_classes = self.prototypes.shape[0]
-        channels = self.prototypes.shape[1]
-        p1 = self.prototypes.unsqueeze(0)
-        p2 = torch.transpose(p1, 0, 1)
-        inter_class_matrix = torch.zeros(num_classes, num_classes, channels)
-        inter_class_matrix = p1 - p2
-
-        prototypes = self.prototypes
-        # intra_class_prototypes = self.intra_class_prototypes
-        step = self.step
-
-        return prototypes, inter_class_matrix
-
-
-
 class InformationPrototype(nn.Module):
     def __init__(self, num_classes):
         super(InformationPrototype, self).__init__()
 
         self.register_buffer('step', torch.tensor([0]*num_classes))
-        self.register_buffer('prototypes', torch.zeros(num_classes, 256))
+        self.register_buffer('prototypes', torch.zeros(num_classes, 512))
         # self.inner = nn.Linear(2048, 2048)
         self.relu = nn.ReLU(inplace=True)
+        # self.mode = mode
+        # self.epoch = epoch
 
 
     def update_prototype(self, x_new, max_logits, max_cls, prototypes):
@@ -368,15 +233,18 @@ class InformationPrototype(nn.Module):
         local_ptypes = torch.zeros_like(prototypes)
         local_ptypes_cls_count = torch.zeros(num_classes).to(local_ptypes.device)
         for idx, cls in enumerate(list(max_cls)):
-            local_ptypes[cls] += x_new[idx]
+            local_ptypes[cls] += (x_new[idx] * max_logits[idx])
+            # local_ptypes[cls] += x_new[idx]
             local_ptypes_cls_count[cls] += 1
 
         exist_indx = local_ptypes_cls_count.type(torch.bool)
         local_ptypes[exist_indx] = local_ptypes[exist_indx] / (
-                local_ptypes_cls_count[exist_indx].unsqueeze(1).expand(-1,channels)
-            )
+            local_ptypes_cls_count[exist_indx].unsqueeze(1).expand(-1, channels)
+        )
         prototypes = local_ptypes
+
         return prototypes
+
 
 
     def graph(self, feat):
@@ -396,7 +264,7 @@ class InformationPrototype(nn.Module):
     def forward(self, x, class_logits):
         '''
 
-        :param x: 64, 256, 8, 8
+        :param x: 64, 256
         :param class_logits: 64, 100
         :return:
         '''
@@ -405,32 +273,47 @@ class InformationPrototype(nn.Module):
 
         pred_normed = F.softmax(class_logits_new, dim=1)
         max_logit = pred_normed.max(dim=1)[0] # 64
+        # print("max_logit:", max_logit)
         max_cls = pred_normed.argmax(dim=1) # 64
 
         x_mapped = x
 
         mat = self.graph(x_mapped)
-        # x_aggregation = self.inner(torch.mm(mat, x_mapped).softmax(dim=-1)) + x_mapped
-        # x_aggregation = torch.mm(mat, x_mapped).softmax(dim=-1) + x_mapped
-        # x_aggregation = self.relu(torch.mm(mat, x_mapped)) + x_mapped
         x_aggregation = torch.mm(mat, x_mapped) + x_mapped
-
         x_new = x_aggregation.clone().detach()
 
         self.prototypes = self.update_prototype(x_new, max_logit, max_cls, self.prototypes)
 
-        num_classes, channels = self.prototypes.shape
-        p1 = self.prototypes.unsqueeze(0)
-        p2 = torch.transpose(p1, 0, 1)
-        inter_class_matrix = torch.zeros(num_classes, num_classes, channels)
-        inter_class_matrix = p1-p2
-
         prototypes = self.prototypes
         step = self.step
+        num_classes, channels = self.prototypes.shape
+
+        p1 = self.prototypes.unsqueeze(0)
+        p2 = torch.transpose(p1, 0, 1)
+        # inter_class_matrix = torch.zeros(num_classes, num_classes, channels)
+        inter_class_matrix = p1-p2
+        # inter_class_matrix = torch.sub(p1,p2)
 
         return prototypes, inter_class_matrix
 
+    @staticmethod
+    def pdist(e, squared=False, eps=1e-12, normalization='max'):
+        e_square = e.pow(2).sum(dim=1)  # 100
+        prod = e @ e.t()  # 100, 100
+        res = (e_square.unsqueeze(1) +
+               e_square.unsqueeze(0) - 2 * prod).clamp(min=eps)
 
+        if not squared:
+            res = res.sqrt()
+
+        res = res.clone()
+        res[range(len(e)), range(len(e))] = 0
+
+        if normalization == 'max':
+            res_max = res.max() + eps
+            res = res / res_max
+
+        return res
 
 
 

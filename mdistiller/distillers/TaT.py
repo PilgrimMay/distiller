@@ -149,18 +149,19 @@ class Conv(nn.Module):
         x = self.regressor(x)
         return x
 
-
+# sadsad
 class transformation(nn.Module):
-    def __init__(self, num_input_channels=512, num_target_channels=512):
+    def __init__(self, num_input_channels=256, num_target_channels=256):
         super(transformation, self).__init__()
         self.num_input_channels = num_input_channels
         self.num_target_channels = num_target_channels
         self.regressor = Conv(self.num_input_channels, self.num_target_channels)
 
+
     def forward(self, feat_stu, feat_tea):
         f_s = torch.flatten(self.regressor(feat_stu), start_dim=2) # B x C x N
-        # f_t = torch.flatten(self.regressor(feat_tea), start_dim=2) # B x C x N
-        f_t = torch.flatten(feat_tea,start_dim=2)
+        f_t = torch.flatten(self.regressor(feat_tea), start_dim=2) # B x C x N
+        # f_t = torch.flatten(feat_tea,start_dim=2)
 
         f_self = torch.flatten(self.regressor(feat_stu), start_dim=2) # B x C x N
         f_s = torch.transpose(f_s, 1, 2) # B x N x C

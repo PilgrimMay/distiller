@@ -130,6 +130,10 @@ sudo python3 setup.py develop
   ```bash
   # for instance, our DKD method.
   python3 tools/train.py --cfg configs/imagenet/r34_r18/dkd.yaml
+  
+  # PKD method
+  python3 tools/train.py --cfg configs/imagenet/r34_r18/pkd.yaml
+  
   ```
 
 4. Training on MS-COCO
